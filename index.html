@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>指北針地圖應用</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-rotate@0.1.4/dist/leaflet-rotate-src.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+      body, html {
+          height: 100%;
+          margin: 0;
+          padding: 0;
+          font-family: Arial, sans-serif;
+      }
+      
+      #map {
+          height: 100%;
+          width: 100%;
+      }
+      
+      /* 指北針樣式 */
+      #compass {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          z-index: 1000;
+          background-color: rgba(255, 255, 255, 0.9);
+          border-radius: 50%;
+          padding: 10px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+          display: none;
+          transition: transform 0.3s ease;
+      }
+      
+      /* 控制按鈕樣式 */
+      #controls {
+          position: absolute;
+          bottom: 30px;
+          right: 20px;
+          z-index: 1000;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+      }
+      
+      .control-btn {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          width: 60px;
+          height: 60px;
+          background-color: white;
+          border: 2px solid #ccc;
+          border-radius: 50%;
+          cursor: pointer;
+          font-size: 24px;
+          color: #333;
+          transition: all 0.3s ease;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      }
+      
+      .control-btn:hover {
+          background-color: #f0f0f0;
+          transform: scale(1.1);
+      }
+      
+      .control-btn.active {
+          background-color: #007bff;
+          color: white;
+          border-color: #007bff;
+      }
+      
+      /* 狀態指示器 */
+      #status {
+          position: absolute;
+          top: 20px;
+          left: 20px;
+          z-index: 1000;
+          background-color: rgba(0, 0, 0, 0.8);
+          color: white;
+          padding: 10px 15px;
+          border-radius: 20px;
+          font-size: 14px;
+          display: none;
+      }
+      
+      /* 響應式設計 */
+      @media (max-width: 600px) {
+          #compass {
+              top: 10px;
+              right: 10px;
+              padding: 8px;
+          }
+          
+          #controls {
+              bottom: 20px;
+              right: 10px;
+          }
+          
+          .control-btn {
+              width: 50px;
+              height: 50px;
+              font-size: 20px;
+          }
+          
+          #status {
+              top: 10px;
+              left: 10px;
+              font-size: 12px;
+              padding: 8px 12px;
+          }
+      }
+      
+      /* 指北針動畫 */
+      .compass-needle {
+          transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      /* 載入動畫 */
+      .loading {
+          animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+      }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  
+  <!-- 指北針 -->
+  <div id="compass">
+      <svg width="60" height="60" viewBox="0 0 100 100" class="compass-needle">
+          <!-- 指北針背景圓 -->
+          <circle cx="50" cy="50" r="45" fill="none" stroke="#ddd" stroke-width="2"/>
+          <!-- 北方標記 -->
+          <text x="50" y="15" text-anchor="middle" font-size="12" font-weight="bold" fill="#333">N</text>
+          <!-- 指北針針頭 (紅色指向北方) -->
+          <polygon points="50,10 55,45 50,40 45,45" fill="#ff4444" stroke="#cc0000" stroke-width="1"/>
+          <!-- 指北針針尾 (白色指向南方) -->
+          <polygon points="50,90 55,55 50,60 45,55" fill="#ffffff" stroke="#666" stroke-width="1"/>
+          <!-- 中心點 -->
+          <circle cx="50" cy="50" r="3" fill="#333"/>
+      </svg>
+  </div>
+  
+  <!-- 狀態指示器 -->
+  <div id="status">
+      <i class="fas fa-compass"></i>
+      <span id="status-text">指北針已關閉</span>
+  </div>
+  
+  <!-- 控制按鈕 -->
+  <div id="controls">
+      <button id="toggleCompass" class="control-btn" title="切換指北針">
+          <i class="fas fa-compass"></i>
+      </button>
+      <button id="resetRotation" class="control-btn" title="重置方向">
+          <i class="fas fa-undo"></i>
+      </button>
+      <button id="centerMap" class="control-btn" title="回到中心">
+          <i class="fas fa-crosshairs"></i>
+      </button>
+  </div>
+
+  <script>
+      let map;
+      let compass = document.querySelector('#compass');
+      let toggleButton = document.getElementById('toggleCompass');
+      let resetButton = document.getElementById('resetRotation');
+      let centerButton = document.getElementById('centerMap');
+      let statusDiv = document.getElementById('status');
+      let statusText = document.getElementById('status-text');
+      
+      let isCompassActive = false;
+      let lastHeading = null;
+      let watchId = null;
+      let userLocationMarker = null;
+
+      // 初始化地圖
+      function initMap() {
+          map = L.map('map', {
+              center: [25.0330, 121.5654], // 台北101
+              zoom: 16,
+              maxZoom: 22,
+              rotate: true, // 啟用旋轉功能
+              rotateControl: {
+                  closeOnZeroBearing: false
+              }
+          });
+
+          // 添加地圖圖層
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+              maxZoom: 22
+          }).addTo(map);
+
+          // 添加一個示範標記
+          L.marker([25.0330, 121.5654])
+              .addTo(map)
+              .bindPopup('台北101<br>測試指北針功能！')
+              .openPopup();
+      }
+
+      // 處理設備方向變化
+      function handleOrientation(event) {
+          if (!isCompassActive) return;
+          
+          // 獲取方位角 (alpha值)
+          let alpha = event.webkitCompassHeading || event.alpha;
+          
+          if (alpha !== null) {
+              // 將 alpha 值轉換為以正北為 0 度的方位角
+              let heading = alpha;
+              if (event.alpha !== undefined) {
+                  heading = 360 - alpha; // 對於使用 alpha 的設備，需要反轉方向
+              }
+              
+              // 只有方向變化超過1度才更新地圖，避免過度更新
+              if (lastHeading === null || Math.abs(heading - lastHeading) > 1) {
+                  rotateMap(heading);
+                  lastHeading = heading;
+                  updateStatus(`方位角: ${Math.round(heading)}°`);
+              }
+          }
+      }
+
+      // 旋轉地圖和指北針
+      function rotateMap(heading) {
+          // 設置地圖方位角 (平滑旋轉)
+          map.setBearing(heading);
+          
+          // 同步旋轉指北針UI (反向旋轉以保持指向北方)
+          compass.querySelector('.compass-needle').style.transform = `rotate(${-heading}deg)`;
+      }
+
+      // 切換指北針功能
+      function toggleCompass() {
+          isCompassActive = !isCompassActive;
+          
+          if (isCompassActive) {
+              startCompass();
+          } else {
+              stopCompass();
+          }
+      }
+
+      // 啟動指北針
+      function startCompass() {
+          compass.style.display = 'block';
+          toggleButton.classList.add('active');
+          statusDiv.style.display = 'block';
+          updateStatus('正在啟動指北針...');
+          
+          // 檢查設備是否支援方向感測
+          if (window.DeviceOrientationEvent) {
+              // iOS 13+ 需要請求權限
+              if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                  DeviceOrientationEvent.requestPermission()
+                      .then(response => {
+                          if (response === 'granted') {
+                              window.addEventListener("deviceorientation", handleOrientation, true);
+                              updateStatus('指北針已啟動');
+                              getCurrentLocation();
+                          } else {
+                              updateStatus('權限被拒絕');
+                              stopCompass();
+                          }
+                      })
+                      .catch(error => {
+                          console.error('權限請求失敗:', error);
+                          updateStatus('權限請求失敗');
+                          stopCompass();
+                      });
+              } else {
+                  // 非 iOS 設備或較舊版本
+                  window.addEventListener("deviceorientation", handleOrientation, true);
+                  updateStatus('指北針已啟動');
+                  getCurrentLocation();
+              }
+          } else {
+              updateStatus('設備不支援方向感測');
+              stopCompass();
+          }
+      }
+
+      // 停止指北針
+      function stopCompass() {
+          isCompassActive = false;
+          compass.style.display = 'none';
+          toggleButton.classList.remove('active');
+          statusDiv.style.display = 'none';
+          
+          // 移除事件監聽器
+          window.removeEventListener("deviceorientation", handleOrientation, true);
+          
+          // 清除位置監聽
+          if (watchId) {
+              navigator.geolocation.clearWatch(watchId);
+              watchId = null;
+          }
+          
+          // 移除位置標記
+          if (userLocationMarker) {
+              map.removeLayer(userLocationMarker);
+              userLocationMarker = null;
+          }
+          
+          lastHeading = null;
+      }
+
+      // 重置地圖方向
+      function resetRotation() {
+          rotateMap(0);
+          lastHeading = null;
+          updateStatus('方向已重置');
+      }
+
+      // 獲取當前位置
+      function getCurrentLocation() {
+          if (navigator.geolocation) {
+              updateStatus('正在獲取位置...');
+              
+              watchId = navigator.geolocation.watchPosition(
+                  function(position) {
+                      const lat = position.coords.latitude;
+                      const lng = position.coords.longitude;
+                      
+                      // 更新或創建位置標記
+                      if (!userLocationMarker) {
+                          userLocationMarker = L.marker([lat, lng], {
+                              icon: L.divIcon({
+                                  className: 'user-location-marker',
+                                  html: '<div style="background-color: #007bff; width: 12px; height: 12px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,123,255,0.5);"></div>',
+                                  iconSize: [18, 18],
+                                  iconAnchor: [9, 9]
+                              })
+                          }).addTo(map);
+                          
+                          // 移動地圖到用戶位置
+                          map.setView([lat, lng], 18);
+                      } else {
+                          userLocationMarker.setLatLng([lat, lng]);
+                      }
+                      
+                      updateStatus('位置已更新');
+                  },
+                  function(error) {
+                      console.error('定位錯誤:', error);
+                      updateStatus('無法獲取位置');
+                  },
+                  {
+                      enableHighAccuracy: true,
+                      maximumAge: 1000,
+                      timeout: 10000
+                  }
+              );
+          } else {
+              updateStatus('設備不支援定位');
+          }
+      }
+
+      // 回到地圖中心
+      function centerMap() {
+          if (userLocationMarker) {
+              map.setView(userLocationMarker.getLatLng(), 18);
+          } else {
+              map.setView([25.0330, 121.5654], 16);
+          }
+          updateStatus('已回到中心');
+      }
+
+      // 更新狀態顯示
+      function updateStatus(message) {
+          statusText.textContent = message;
+          
+          // 3秒後隱藏狀態
+          setTimeout(() => {
+              if (!isCompassActive) {
+                  statusDiv.style.display = 'none';
+              }
+          }, 3000);
+      }
+
+      // 綁定事件監聽器
+      toggleButton.addEventListener('click', toggleCompass);
+      resetButton.addEventListener('click', resetRotation);
+      centerButton.addEventListener('click', centerMap);
+
+      // 初始化地圖
+      initMap();
+
+      // 處理頁面可見性變化
+      document.addEventListener('visibilitychange', function() {
+          if (document.hidden && isCompassActive) {
+              // 頁面隱藏時暫停指北針
+              window.removeEventListener("deviceorientation", handleOrientation, true);
+          } else if (!document.hidden && isCompassActive) {
+              // 頁面顯示時恢復指北針
+              window.addEventListener("deviceorientation", handleOrientation, true);
+          }
+      });
+
+      // 處理窗口大小變化
+      window.addEventListener('resize', function() {
+          map.invalidateSize();
+      });
+
+      // 添加觸控手勢支援 (防止地圖拖拽時觸發指北針)
+      let isDragging = false;
+      
+      map.on('dragstart', function() {
+          isDragging = true;
+      });
+      
+      map.on('dragend', function() {
+          setTimeout(() => {
+              isDragging = false;
+          }, 100);
+      });
+
+      // 優化方向處理 (在拖拽時暫停更新)
+      function handleOrientationOptimized(event) {
+          if (!isCompassActive || isDragging) return;
+          handleOrientation(event);
+      }
+
+      console.log('指北針地圖應用已載入完成！');
+      console.log('點擊右下角的指北針按鈕開始使用');
+  </script>
+</body>
+</html>
